@@ -15,13 +15,11 @@ import FloatingChat from './FloatingChat.jsx';
 import ScanDocument from './ScanDocument.jsx';
 
 const USERS = {
-  'ed.stull': { name: 'Ed Stull', email: 'edstull@elstull.com' },
-  'john.felder': { name: 'John C. Felder', email: 'john.felder@pae-export.com' },
-  'helen.cuba': { name: 'Helen Savo-Sardaro', email: 'helen_ss_law@hotmail.com' },
-  'richard.kam': { name: 'Richard Kam', email: 'rick@idexperts.com' },
-  'carmen.stull': { name: 'Carmen Stull', email: 'carmen@elstull.com' },
-  'albert.diaz': { name: 'Albert Diaz', email: 'Adiaz@malvarfreight.com' },
-  'john.doe': { name: 'John Doe', email: 'john.doe@example.com' },
+  'dr.mike': { name: 'Dr. Mike Kam', email: 'info@crashcareclinics.com' },
+  'therapist.amy': { name: 'Amy (Massage)', email: 'amy@crashcareclinics.com' },
+  'therapist.ben': { name: 'Ben (Rehab)', email: 'ben@crashcareclinics.com' },
+  'therapist.cara': { name: 'Cara (Laser)', email: 'cara@crashcareclinics.com' },
+  'front.desk': { name: 'Front Desk', email: 'frontdesk@crashcareclinics.com' },
 };
 
 const EMAIL_TO_ID = {};
@@ -373,7 +371,7 @@ export default function App() {
           {loading && <div style={{ color: '#4a90d9', fontSize: 12, marginTop: 12 }}>Connecting...</div>}
 
           <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px solid #2a3a4e' }}>
-            <p style={{ color: '#8899aa', fontSize: 10 }}>Premier Automotive Export, Ltd. (PAE)</p>
+            <p style={{ color: '#8899aa', fontSize: 10 }}>Crash Care Clinics</p>
           </div>
         </div>
       </div>
