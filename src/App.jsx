@@ -280,9 +280,9 @@ export default function App() {
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif", padding: 16, boxSizing: 'border-box' }}>
         <div style={{ background: '#111827', border: '1px solid #2a3a4e', borderRadius: 16,
           padding: '32px 24px', textAlign: 'center', width: '100%', maxWidth: 380 }}>
-          <h1 style={{ color: '#4a90d9', fontSize: 22, fontWeight: 700, margin: '0 0 4px' }}>FSM Drive</h1>
+          <h1 style={{ color: '#4a90d9', fontSize: 22, fontWeight: 700, margin: '0 0 4px' }}>Crash Care Clinics</h1>
           <p style={{ color: '#8899aa', fontSize: 11, margin: '0 0 28px', letterSpacing: 1, textTransform: 'uppercase' }}>
-            Operational Intelligence
+            Powered by FSM Drive
           </p>
 
           {/* ── Demo button — prominent ─────────────────────── */}
