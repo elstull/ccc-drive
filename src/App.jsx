@@ -15,7 +15,7 @@ import FloatingChat from './FloatingChat.jsx';
 import ScanDocument from './ScanDocument.jsx';
 
 const USERS = {
-  'dr.mike': { name: 'Dr. Mike Kam', email: 'info@crashcareclinics.com' },
+  'dr.mike': { name: 'Dr. Mike Kam', email: 'mikekam503@gmail.com' },
   'therapist.amy': { name: 'Amy (Massage)', email: 'amy@crashcareclinics.com' },
   'therapist.ben': { name: 'Ben (Rehab)', email: 'ben@crashcareclinics.com' },
   'therapist.cara': { name: 'Cara (Laser)', email: 'cara@crashcareclinics.com' },
