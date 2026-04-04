@@ -23,7 +23,7 @@ const PURPLE = '#c084fc'; // Amber — shared with you (was purple)
 
 function getGreeting(name) {
   const h = new Date().getHours();
-  const first = name?.split(' ')[0] || 'there';
+  const first = name?.startsWith('Dr.') ? name?.split(' ').slice(0,2).join(' ') : name?.split(' ')[0] || 'there';
   if (h < 12) return 'Good morning, ' + first;
   if (h < 17) return 'Good afternoon, ' + first;
   return 'Good evening, ' + first;
