@@ -113,6 +113,7 @@ export default function App() {
   // ── Check for existing session on app load ─────────────────────────────
   useEffect(() => {
     const checkSession = async () => {
+      const timeout = setTimeout(() => setAuthChecking(false), 3000);
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session && session.user) {
