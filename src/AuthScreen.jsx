@@ -1,385 +1,309 @@
 import { useState, useEffect } from 'react';
-import {
-  signUp, signIn, signOut, getSession, getUserProfile, getPlans,
-  selectPlan, validateInviteCode, onAuthStateChange
-} from './auth.js';
+import { supabase } from './supabase.js';
 
-// ── Theme constants (matching FSM Drive dark theme) ──────────────────────────
-const T = {
-  bg: '#0a0e17', surface: '#111827', surfaceAlt: '#1a2332',
-  border: '#2a3a4e', borderFocus: '#4a90d9',
-  text: '#e2e8f0', textMuted: '#8899aa', textDim: '#556677',
-  accent: '#4a90d9', accentHover: '#5a9ee9',
-  success: '#34d399', warning: '#fbbf24', error: '#ef4444',
-  compound: '#c084fc',
-};
+// ============================================================
+// FSM DRIVE v2 — AUTH SCREEN
+// Real Supabase email/password authentication.
+// Replaces the "click your name" login pattern.
+//
+// Usage in App.jsx:
+//   import AuthScreen from './AuthScreen.jsx';
+//   Replace the old login render with:
+//     <AuthScreen onLogin={(fsmUser) => setCurrentUser(fsmUser)} />
+// ============================================================
 
-const fontStack = "'JetBrains Mono','Fira Code',Consolas,monospace";
-
-// ── Shared Styles ────────────────────────────────────────────────────────────
-const inputStyle = {
-  width: '100%', padding: '12px 14px', background: T.bg, border: `1.5px solid ${T.border}`,
-  borderRadius: 8, color: T.text, fontSize: 13, fontFamily: fontStack, outline: 'none',
-  boxSizing: 'border-box', transition: 'border-color 0.2s',
-};
-const labelStyle = { fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.2, color: T.textDim, marginBottom: 4, display: 'block' };
-const btnPrimary = {
-  width: '100%', padding: '14px 20px', background: T.accent, border: 'none', borderRadius: 10,
-  color: '#fff', fontSize: 14, fontFamily: fontStack, fontWeight: 700, cursor: 'pointer',
-  transition: 'background 0.2s', letterSpacing: 0.5,
-};
-const btnSecondary = {
-  ...btnPrimary, background: 'transparent', border: `1.5px solid ${T.border}`, color: T.textMuted,
-};
-const linkStyle = { color: T.accent, cursor: 'pointer', fontSize: 12, background: 'none', border: 'none', fontFamily: fontStack, textDecoration: 'underline' };
-
-// ── Main Auth Screen ─────────────────────────────────────────────────────────
-export default function AuthScreen({ onAuthenticated }) {
-  const [view, setView] = useState('login'); // login | register | plans | forgot
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
-
-  // Form state
+export default function AuthScreen({ onLogin, instanceName = 'Aculine, Inc.' }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [name, setName] = useState('');
-  const [company, setCompany] = useState('');
-  const [inviteCode, setInviteCode] = useState('');
-  const [inviteInfo, setInviteInfo] = useState(null);
-
-  // Plan selection
-  const [plans, setPlans] = useState([]);
-  const [selectedPlan, setSelectedPlan] = useState(null);
-  const [billingPeriod, setBillingPeriod] = useState('monthly');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
 
   // Check for existing session on mount
   useEffect(() => {
-    const checkSession = async () => {
-      try {
-        const session = await getSession();
-        if (session?.user) {
-          const profile = await getUserProfile(session.user.id);
-          if (profile) {
-            onAuthenticated(session, profile);
-            return;
-          }
-        }
-      } catch (e) {
-        console.log('No existing session');
+    checkExistingSession();
+  }, []);
+
+  async function checkExistingSession() {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        await resolveUser(session.user);
       }
-      setLoading(false);
-    };
-    checkSession();
-
-    // Listen for auth changes
-    const { data: { subscription } } = onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session?.user) {
-        try {
-          const profile = await getUserProfile(session.user.id);
-          if (profile) onAuthenticated(session, profile);
-        } catch (e) {
-          console.error('Profile load error:', e);
-        }
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, [onAuthenticated]);
-
-  // Load plans when switching to plans view
-  useEffect(() => {
-    if (view === 'plans' || view === 'register') {
-      getPlans().then(setPlans).catch(e => console.error('Plans load error:', e));
+    } catch (err) {
+      console.error('Session check error:', err);
+    } finally {
+      setCheckingSession(false);
     }
-  }, [view]);
+  }
 
-  // Validate invite code
-  useEffect(() => {
-    if (inviteCode.length >= 10) {
-      validateInviteCode(inviteCode).then(info => {
-        setInviteInfo(info);
-        if (info) setSuccess(`Invited by ${info.sponsor?.name || 'a sponsor'} — ${info.granted_role} access`);
-        else setError('Invalid or expired invite code');
+  async function resolveUser(authUser) {
+    // Find the matching fsm_user by auth_id
+    const { data: fsmUsers, error: queryError } = await supabase
+      .from('fsm_users')
+      .select('*')
+      .eq('auth_id', authUser.id);
+
+    if (queryError) {
+      console.error('User lookup error:', queryError);
+      // Fallback: try matching by email
+      const { data: emailMatch } = await supabase
+        .from('fsm_users')
+        .select('*')
+        .eq('email', authUser.email);
+
+      if (emailMatch && emailMatch.length > 0) {
+        onLogin({
+          userId: emailMatch[0].id,
+          userName: emailMatch[0].name,
+          userRole: emailMatch[0].role,
+          userEmail: emailMatch[0].email,
+          authId: authUser.id,
+        });
+        return;
+      }
+      setError('Account exists but no FSM Drive user profile found. Contact your administrator.');
+      return;
+    }
+
+    if (fsmUsers && fsmUsers.length > 0) {
+      onLogin({
+        userId: fsmUsers[0].id,
+        userName: fsmUsers[0].name,
+        userRole: fsmUsers[0].role,
+        userEmail: fsmUsers[0].email,
+        authId: authUser.id,
       });
     } else {
-      setInviteInfo(null);
+      // Try email fallback
+      const { data: emailMatch } = await supabase
+        .from('fsm_users')
+        .select('*')
+        .eq('email', authUser.email);
+
+      if (emailMatch && emailMatch.length > 0) {
+        // Link the auth_id for next time
+        await supabase
+          .from('fsm_users')
+          .update({ auth_id: authUser.id })
+          .eq('id', emailMatch[0].id);
+
+        onLogin({
+          userId: emailMatch[0].id,
+          userName: emailMatch[0].name,
+          userRole: emailMatch[0].role,
+          userEmail: emailMatch[0].email,
+          authId: authUser.id,
+        });
+      } else {
+        setError('No FSM Drive user profile found for this account. Contact your administrator.');
+      }
     }
-  }, [inviteCode]);
+  }
 
-  const clearMessages = () => { setError(null); setSuccess(null); };
+  async function handleLogin(e) {
+    if (e) e.preventDefault();
+    setError('');
+    setLoading(true);
 
-  // ── Login ──────────────────────────────────────────────────────────────────
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    clearMessages(); setLoading(true);
     try {
-      await signIn(email, password);
-      // onAuthStateChange will handle the rest
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: password,
+      });
+
+      if (authError) {
+        if (authError.message.includes('Invalid login')) {
+          setError('Invalid email or password.');
+        } else {
+          setError(authError.message);
+        }
+        setLoading(false);
+        return;
+      }
+
+      if (data?.user) {
+        await resolveUser(data.user);
+      }
     } catch (err) {
-      setError(err.message === 'Invalid login credentials' ? 'Invalid email or password' : err.message);
+      setError('Unable to reach the server. Check your connection.');
+    } finally {
       setLoading(false);
     }
-  };
-
-  // ── Register ───────────────────────────────────────────────────────────────
-  const handleRegister = async (e) => {
-    e.preventDefault();
-    clearMessages();
-    if (password !== confirmPassword) { setError('Passwords do not match'); return; }
-    if (password.length < 8) { setError('Password must be at least 8 characters'); return; }
-    if (!name.trim()) { setError('Name is required'); return; }
-
-    setLoading(true);
-    try {
-      await signUp(email, password, name, inviteCode || null);
-      setSuccess('Account created! Check your email to confirm, then sign in.');
-      setView('login');
-    } catch (err) {
-      setError(err.message);
-    }
-    setLoading(false);
-  };
-
-  if (loading && view === 'login') {
-    return (
-      <div style={{ width: '100vw', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: T.bg, fontFamily: fontStack, color: T.accent, fontSize: 14 }}>
-        Connecting to FSM Drive...
-      </div>
-    );
   }
 
-  // ── Pricing Page ───────────────────────────────────────────────────────────
-  if (view === 'plans') {
+  // Show loading while checking existing session
+  if (checkingSession) {
     return (
-      <div style={{ width: '100vw', minHeight: '100vh', background: T.bg, fontFamily: fontStack,
-        display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 20px', overflowY: 'auto' }}>
-        <h1 style={{ color: T.accent, fontSize: 28, fontWeight: 700, margin: '0 0 8px', letterSpacing: 0.5 }}>FSM Drive</h1>
-        <p style={{ color: T.textDim, fontSize: 12, letterSpacing: 1, textTransform: 'uppercase', margin: '0 0 32px' }}>Choose Your Plan</p>
-
-        {/* Billing toggle */}
-        <div style={{ display: 'flex', gap: 0, marginBottom: 32, borderRadius: 8, overflow: 'hidden', border: `1px solid ${T.border}` }}>
-          {['monthly', 'yearly'].map(p => (
-            <button key={p} onClick={() => setBillingPeriod(p)}
-              style={{ padding: '10px 24px', background: billingPeriod === p ? T.accent : T.surface,
-                border: 'none', color: billingPeriod === p ? '#fff' : T.textMuted,
-                fontSize: 12, fontFamily: fontStack, fontWeight: 600, cursor: 'pointer', textTransform: 'capitalize' }}>
-              {p}{p === 'yearly' ? ' (Save 17%)' : ''}
-            </button>
-          ))}
-        </div>
-
-        {/* Plan cards */}
-        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 1000 }}>
-          {plans.filter(p => {
-            if (billingPeriod === 'monthly') return !p.id.endsWith('_yearly');
-            return !p.id.endsWith('_monthly');
-          }).map(plan => {
-            const isPro = plan.id.includes('pro');
-            const isEnterprise = plan.id.includes('enterprise');
-            const isFree = plan.id === 'free';
-            const price = billingPeriod === 'yearly' ? plan.price_yearly : plan.price_monthly;
-            const features = plan.features?.highlights || [];
-
-            return (
-              <div key={plan.id} style={{
-                width: 280, background: T.surface, border: `1.5px solid ${isPro ? T.accent : T.border}`,
-                borderRadius: 16, padding: '28px 24px', display: 'flex', flexDirection: 'column',
-                position: 'relative', overflow: 'hidden',
-              }}>
-                {isPro && (
-                  <div style={{ position: 'absolute', top: 12, right: -28, background: T.accent, color: '#fff',
-                    fontSize: 10, fontWeight: 700, padding: '3px 32px', transform: 'rotate(45deg)', letterSpacing: 1 }}>
-                    POPULAR
-                  </div>
-                )}
-                <div style={{ fontSize: 14, fontWeight: 700, color: isPro ? T.accent : T.text, marginBottom: 6 }}>{plan.name.replace(/ \(.*\)/, '')}</div>
-                <div style={{ fontSize: 11, color: T.textMuted, marginBottom: 16, lineHeight: 1.5 }}>{plan.description}</div>
-
-                <div style={{ marginBottom: 20 }}>
-                  {isFree ? (
-                    <span style={{ fontSize: 32, fontWeight: 700, color: T.text }}>Free</span>
-                  ) : (
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                      <span style={{ fontSize: 32, fontWeight: 700, color: T.text }}>${(price / 100).toFixed(0)}</span>
-                      <span style={{ fontSize: 12, color: T.textDim }}>/{billingPeriod === 'yearly' ? 'year' : 'mo'}</span>
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ flex: 1, marginBottom: 20 }}>
-                  {features.map((f, i) => (
-                    <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
-                      <span style={{ color: T.success, fontSize: 12, flexShrink: 0, marginTop: 1 }}>✓</span>
-                      <span style={{ fontSize: 11, color: T.textMuted, lineHeight: 1.4 }}>{f}</span>
-                    </div>
-                  ))}
-                </div>
-
-                <button onClick={() => { setSelectedPlan(plan); setView('register'); }}
-                  style={{ ...btnPrimary, background: isPro ? T.accent : isEnterprise ? T.compound : T.surfaceAlt,
-                    color: isFree ? T.textMuted : '#fff', border: isFree ? `1px solid ${T.border}` : 'none',
-                    padding: '12px 16px', fontSize: 13 }}>
-                  {isFree ? 'Get Started' : isEnterprise ? 'Contact Sales' : 'Start 14-Day Trial'}
-                </button>
-              </div>
-            );
-          })}
-        </div>
-
-        <button onClick={() => setView('login')} style={{ ...linkStyle, marginTop: 32 }}>
-          Already have an account? Sign in
-        </button>
-
-        <div style={{ marginTop: 40, color: T.textDim, fontSize: 10 }}>
-          E.L. Stull & Associates, Inc.
+      <div style={styles.container}>
+        <div style={styles.card}>
+          <h1 style={styles.title}>{instanceName}</h1>
+          <p style={styles.subtitle}>POWERED BY FSM DRIVE</p>
+          <p style={{ color: '#8899aa', marginTop: 40, textAlign: 'center' }}>Checking session...</p>
         </div>
       </div>
     );
   }
-
-  // ── Login / Register Form ──────────────────────────────────────────────────
-  const isRegister = view === 'register';
 
   return (
-    <div style={{ width: '100vw', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: T.bg, fontFamily: fontStack }}>
-      <div style={{ width: '100%', maxWidth: 420, background: T.surface, border: `1px solid ${T.border}`,
-        borderRadius: 20, padding: '36px 40px', boxSizing: 'border-box' }}>
+    <div style={styles.container}>
+      <div style={styles.card}>
+        <h1 style={styles.title}>{instanceName}</h1>
+        <p style={styles.subtitle}>POWERED BY FSM DRIVE</p>
 
-        {/* Header */}
-        <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <h1 style={{ color: T.accent, fontSize: 24, fontWeight: 700, margin: '0 0 6px', letterSpacing: 0.5 }}>FSM Drive</h1>
-          <p style={{ color: T.textDim, fontSize: 11, margin: 0, letterSpacing: 1, textTransform: 'uppercase' }}>
-            {isRegister ? 'Create Your Account' : 'Sign In'}
-          </p>
-          {selectedPlan && isRegister && (
-            <div style={{ marginTop: 8, padding: '6px 14px', background: T.accent + '18', border: `1px solid ${T.accent}33`,
-              borderRadius: 6, display: 'inline-block' }}>
-              <span style={{ fontSize: 11, color: T.accent, fontWeight: 600 }}>
-                {selectedPlan.name} — {selectedPlan.id === 'free' ? 'Free' : '14-day trial'}
-              </span>
+        <div style={{ marginTop: 32 }}>
+          <div style={styles.inputGroup}>
+            <label style={styles.label}>Email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+              placeholder="you@company.com"
+              style={styles.input}
+              autoComplete="email"
+              autoFocus
+            />
+          </div>
+
+          <div style={styles.inputGroup}>
+            <label style={styles.label}>Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+              placeholder="Enter your password"
+              style={styles.input}
+              autoComplete="current-password"
+            />
+          </div>
+
+          {error && (
+            <div style={styles.error}>
+              {error}
             </div>
           )}
-        </div>
 
-        {/* Messages */}
-        {error && (
-          <div style={{ background: '#e0303018', border: '1px solid #e0303044', borderRadius: 8,
-            padding: '10px 14px', marginBottom: 16, color: '#f08080', fontSize: 12 }}>
-            {error}
-          </div>
-        )}
-        {success && (
-          <div style={{ background: T.success + '18', border: `1px solid ${T.success}44`, borderRadius: 8,
-            padding: '10px 14px', marginBottom: 16, color: T.success, fontSize: 12 }}>
-            {success}
-          </div>
-        )}
-
-        {/* Form */}
-        <form onSubmit={isRegister ? handleRegister : handleLogin}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-
-            {isRegister && (
-              <>
-                <div>
-                  <label style={labelStyle}>Full Name *</label>
-                  <input style={inputStyle} value={name} onChange={e => setName(e.target.value)}
-                    placeholder="Ed Stull" required
-                    onFocus={e => e.target.style.borderColor = T.borderFocus}
-                    onBlur={e => e.target.style.borderColor = T.border} />
-                </div>
-                <div>
-                  <label style={labelStyle}>Company</label>
-                  <input style={inputStyle} value={company} onChange={e => setCompany(e.target.value)}
-                    placeholder="E.L. Stull & Associates"
-                    onFocus={e => e.target.style.borderColor = T.borderFocus}
-                    onBlur={e => e.target.style.borderColor = T.border} />
-                </div>
-              </>
-            )}
-
-            <div>
-              <label style={labelStyle}>Email *</label>
-              <input style={inputStyle} type="email" value={email} onChange={e => { setEmail(e.target.value); clearMessages(); }}
-                placeholder="you@company.com" required autoFocus={!isRegister}
-                onFocus={e => e.target.style.borderColor = T.borderFocus}
-                onBlur={e => e.target.style.borderColor = T.border} />
-            </div>
-
-            <div>
-              <label style={labelStyle}>Password *</label>
-              <input style={inputStyle} type="password" value={password} onChange={e => { setPassword(e.target.value); clearMessages(); }}
-                placeholder={isRegister ? 'Minimum 8 characters' : '••••••••'} required
-                onFocus={e => e.target.style.borderColor = T.borderFocus}
-                onBlur={e => e.target.style.borderColor = T.border} />
-            </div>
-
-            {isRegister && (
-              <>
-                <div>
-                  <label style={labelStyle}>Confirm Password *</label>
-                  <input style={inputStyle} type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
-                    placeholder="••••••••" required
-                    onFocus={e => e.target.style.borderColor = T.borderFocus}
-                    onBlur={e => e.target.style.borderColor = T.border} />
-                </div>
-
-                {/* Invite code */}
-                <div>
-                  <label style={labelStyle}>Invite Code (optional)</label>
-                  <input style={{ ...inputStyle, borderColor: inviteInfo ? T.success : T.border }}
-                    value={inviteCode} onChange={e => { setInviteCode(e.target.value.toUpperCase()); clearMessages(); }}
-                    placeholder="INV-XXXXXXXX"
-                    onFocus={e => e.target.style.borderColor = T.borderFocus}
-                    onBlur={e => e.target.style.borderColor = inviteInfo ? T.success : T.border} />
-                  {inviteInfo && (
-                    <div style={{ fontSize: 11, color: T.success, marginTop: 4 }}>
-                      ✓ Sponsored by {inviteInfo.sponsor?.name} — {inviteInfo.granted_role} access
-                      {inviteInfo.granted_plan && inviteInfo.granted_plan !== 'free' && ` + ${inviteInfo.granted_plan} plan`}
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-
-          <button type="submit" disabled={loading}
-            style={{ ...btnPrimary, marginTop: 22, opacity: loading ? 0.6 : 1 }}>
-            {loading ? (isRegister ? 'Creating Account...' : 'Signing In...') : (isRegister ? 'Create Account' : 'Sign In')}
+          <button
+            onClick={handleLogin}
+            disabled={loading || !email || !password}
+            style={{
+              ...styles.loginButton,
+              opacity: (loading || !email || !password) ? 0.6 : 1,
+            }}
+          >
+            {loading ? 'Signing in...' : 'Sign In'}
           </button>
-        </form>
-
-        {/* Footer links */}
-        <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-          {!isRegister ? (
-            <>
-              <button onClick={() => { setView('register'); clearMessages(); }} style={linkStyle}>
-                Don't have an account? Create one
-              </button>
-              <button onClick={() => { setView('plans'); clearMessages(); }} style={linkStyle}>
-                View pricing plans
-              </button>
-            </>
-          ) : (
-            <>
-              <button onClick={() => { setView('login'); clearMessages(); }} style={linkStyle}>
-                Already have an account? Sign in
-              </button>
-              <button onClick={() => { setView('plans'); clearMessages(); }} style={linkStyle}>
-                ← Back to pricing
-              </button>
-            </>
-          )}
         </div>
 
-        <div style={{ marginTop: 24, paddingTop: 16, borderTop: `1px solid ${T.border}`, textAlign: 'center' }}>
-          <p style={{ color: T.textDim, fontSize: 10, margin: 0 }}>E.L. Stull & Associates, Inc.</p>
+        <div style={styles.divider}>
+          <span style={styles.dividerText}>Secure authentication powered by Supabase</span>
         </div>
+
+        <p style={styles.footer}>{instanceName}</p>
       </div>
     </div>
   );
 }
+
+// Sign out helper — export for use in App.jsx nav
+export async function signOut() {
+  await supabase.auth.signOut();
+  window.location.reload();
+}
+
+const styles = {
+  container: {
+    minHeight: '100vh',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'linear-gradient(135deg, #0a1628 0%, #111827 50%, #0a1628 100%)',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+    padding: 16,
+  },
+  card: {
+    background: '#111827',
+    border: '1px solid #2a3a4e',
+    borderRadius: 16,
+    padding: '32px 24px',
+    textAlign: 'center',
+    width: '100%',
+    maxWidth: 380,
+    boxSizing: 'border-box',
+  },
+  title: {
+    color: '#4a90d9',
+    fontSize: 22,
+    fontWeight: 700,
+    margin: '0 0 4px',
+  },
+  subtitle: {
+    color: '#8899aa',
+    fontSize: 11,
+    margin: '0 0 28px',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  inputGroup: {
+    marginBottom: 16,
+    textAlign: 'left',
+  },
+  label: {
+    display: 'block',
+    color: '#8899aa',
+    fontSize: 12,
+    marginBottom: 6,
+    fontWeight: 500,
+  },
+  input: {
+    width: '100%',
+    padding: '10px 12px',
+    background: '#0a1628',
+    border: '1px solid #2a3a4e',
+    borderRadius: 8,
+    color: '#e0e0e0',
+    fontSize: 14,
+    outline: 'none',
+    boxSizing: 'border-box',
+    transition: 'border-color 0.2s',
+  },
+  error: {
+    background: 'rgba(220, 38, 38, 0.1)',
+    border: '1px solid rgba(220, 38, 38, 0.3)',
+    borderRadius: 8,
+    padding: '8px 12px',
+    color: '#f87171',
+    fontSize: 13,
+    marginBottom: 16,
+    textAlign: 'left',
+  },
+  loginButton: {
+    width: '100%',
+    padding: '11px 16px',
+    background: 'linear-gradient(135deg, #1a5a8a 0%, #2e75b6 100%)',
+    border: 'none',
+    borderRadius: 8,
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'opacity 0.2s',
+  },
+  divider: {
+    marginTop: 20,
+    paddingTop: 14,
+    borderTop: '1px solid #2a3a4e',
+  },
+  dividerText: {
+    color: '#556677',
+    fontSize: 10,
+    letterSpacing: 0.5,
+  },
+  footer: {
+    color: '#8899aa',
+    fontSize: 10,
+    marginTop: 12,
+  },
+};

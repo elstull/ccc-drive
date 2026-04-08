@@ -13,19 +13,7 @@ import FinancialView from './FinancialView.jsx';
 import HelpView from './HelpView.jsx';
 import FloatingChat from './FloatingChat.jsx';
 import ScanDocument from './ScanDocument.jsx';
-
-const USERS = {
-  'dr.mike': { name: 'Dr. Mike Kam', email: 'mikekam503@gmail.com' },
-  'therapist.amy': { name: 'Amy (Massage)', email: 'amy@crashcareclinics.com' },
-  'therapist.ben': { name: 'Ben (Rehab)', email: 'ben@crashcareclinics.com' },
-  'therapist.cara': { name: 'Cara (Laser)', email: 'cara@crashcareclinics.com' },
-  'front.desk': { name: 'Front Desk', email: 'frontdesk@crashcareclinics.com' },
-};
-
-const EMAIL_TO_ID = {};
-Object.entries(USERS).forEach(([id, u]) => {
-  EMAIL_TO_ID[u.email.toLowerCase()] = id;
-});
+import AuthScreen, { signOut } from './AuthScreen.jsx';
 
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -92,7 +80,7 @@ function BottomNav({ role, activeTab, onNav, onSignOut }) {
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
-  const [authChecking, setAuthChecking] = useState(true);
+  const [userName, setUserName] = useState('');
   const [registry, setRegistry] = useState(null);
   const [locks, setLocks] = useState({});
   const [onlineUsers, setOnlineUsers] = useState({});
@@ -103,83 +91,24 @@ export default function App() {
   const prevViewRef = useRef('action');
   const [userRole, setUserRole] = useState('executive');
   const [registryLoading, setRegistryLoading] = useState(false);
-  const [loginMode, setLoginMode] = useState('quick');
-  const [emailInput, setEmailInput] = useState('');
-  const [passwordInput, setPasswordInput] = useState('');
   const [showDemo, setShowDemo] = useState(false);
   const [showScan, setShowScan] = useState(false);
   const channelRefs = useRef([]);
 
-  // ── Check for existing session on app load ─────────────────────────────
+  // Derived users object — replaces the old static USERS dict for child
+  // components that expect a { id: { name, email } } lookup map.
+  const users = currentUser
+    ? { [currentUser]: { name: userName || currentUser, email: '' } }
+    : {};
+
+  // Mark connected once AuthScreen resolves a user
   useEffect(() => {
-    const checkSession = async () => {
-      const timeout = setTimeout(() => setAuthChecking(false), 3000);
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session && session.user) {
-          const email = session.user.email.toLowerCase();
-          const userId = EMAIL_TO_ID[email];
-          if (userId) { await loginUser(userId); setAuthChecking(false); return; }
-        }
-        const saved = localStorage.getItem('fsm_drive_user');
-        if (saved && USERS[saved]) { await loginUser(saved); setAuthChecking(false); return; }
-      } catch (e) { console.log('Session check:', e.message); }
-      setAuthChecking(false);
-    };
-    checkSession();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session && session.user) {
-        const email = session.user.email.toLowerCase();
-        const userId = EMAIL_TO_ID[email];
-        if (userId) await loginUser(userId);
-        else setError('No FSM Drive account found for ' + session.user.email);
-      }
-    });
-    return () => subscription.unsubscribe();
-  }, []);
-
-  const loginUser = async (userId) => {
-    setCurrentUser(userId);
-    localStorage.setItem('fsm_drive_user', userId);
-    try {
-      const { data: jobData } = await supabase
-        .from('user_job_assignments').select('job_profile_id')
-        .eq('user_id', userId).eq('is_primary', true).limit(1);
-      if (jobData?.[0]) setUserRole(jobData[0].job_profile_id);
-    } catch (e) { console.log('Role lookup:', e.message); }
-    setConnected(true);
-  };
-
-  const quickLogin = async (userId) => { setLoading(true); await loginUser(userId); setLoading(false); };
-
-  const signInWithGoogle = async () => {
-    setLoading(true);
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google', options: { redirectTo: window.location.origin }
-      });
-      if (error) setError(error.message);
-    } catch (e) { setError('Google sign-in not available yet.'); setLoginMode('quick'); }
-    setLoading(false);
-  };
-
-  const signInWithEmail = async () => {
-    if (!emailInput.trim() || !passwordInput.trim()) return;
-    setLoading(true);
-    try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: emailInput.trim(), password: passwordInput.trim()
-      });
-      if (error) setError(error.message);
-    } catch (e) { setError(e.message); }
-    setLoading(false);
-  };
+    if (currentUser) setConnected(true);
+  }, [currentUser]);
 
   const logout = async () => {
-    localStorage.removeItem('fsm_drive_user');
     try { await supabase.auth.signOut(); } catch (e) {}
-    setCurrentUser(null); setConnected(false); setRegistry(null);
+    setCurrentUser(null); setUserName(''); setConnected(false); setRegistry(null);
     setAppView('action'); setUserRole('executive'); setError(null);
   };
 
@@ -209,7 +138,7 @@ export default function App() {
       else if (p.old?.fsm_name) refreshLocks(p.old.fsm_name);
     });
     const ch3 = subscribeToPresence('fsm-editors-presence', currentUser,
-      USERS[currentUser]?.name || currentUser, (s) => setOnlineUsers(s));
+      userName || currentUser, (s) => setOnlineUsers(s));
     channelRefs.current = [ch1, ch2, ch3];
     return () => { channelRefs.current.forEach(c => supabase.removeChannel(c)); channelRefs.current = []; };
   }, [connected, currentUser, refreshRegistry, refreshLocks]);
@@ -241,22 +170,6 @@ export default function App() {
 
 
   // ═══════════════════════════════════════════════════════════════════════
-  // AUTH CHECK — brief splash
-  // ═══════════════════════════════════════════════════════════════════════
-
-  if (authChecking) {
-    return (
-      <div style={{ width: '100%', height: '100vh', display: 'flex', alignItems: 'center',
-        justifyContent: 'center', background: '#0a0e17' }}>
-        <div style={{ color: '#4a90d9', fontSize: 16, fontFamily: "'JetBrains Mono', monospace" }}>
-          FSM Drive
-        </div>
-      </div>
-    );
-  }
-
-
-  // ═══════════════════════════════════════════════════════════════════════
   // DEMO MODE — FSM Drive demonstrating itself
   // ═══════════════════════════════════════════════════════════════════════
 
@@ -276,106 +189,10 @@ export default function App() {
 
   if (!currentUser || !connected) {
     return (
-      <div style={{ width: '100%', minHeight: '100vh', display: 'flex', alignItems: 'center',
-        justifyContent: 'center', background: '#0a0e17',
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif", padding: 16, boxSizing: 'border-box' }}>
-        <div style={{ background: '#111827', border: '1px solid #2a3a4e', borderRadius: 16,
-          padding: '32px 24px', textAlign: 'center', width: '100%', maxWidth: 380 }}>
-          <h1 style={{ color: '#4a90d9', fontSize: 22, fontWeight: 700, margin: '0 0 4px' }}>Crash Care Clinics</h1>
-          <p style={{ color: '#8899aa', fontSize: 11, margin: '0 0 28px', letterSpacing: 1, textTransform: 'uppercase' }}>
-            Powered by FSM Drive
-          </p>
-
-          {/* ── Demo button — prominent ─────────────────────── */}
-          <button onClick={() => setShowDemo(true)}
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              width: '100%', padding: '14px 20px', marginBottom: 20,
-              background: 'linear-gradient(135deg, #1a3a5c, #2a5a8c)', border: '1.5px solid #4a90d9',
-              borderRadius: 10, color: '#e2e8f0', fontSize: 14, fontWeight: 600,
-              fontFamily: 'inherit', cursor: 'pointer', WebkitTapHighlightColor: 'transparent' }}>
-            {'\uD83C\uDFBC'} Watch Demo
-          </button>
-
-          {error && (
-            <div style={{ background: '#e0303018', border: '1px solid #e0303044', borderRadius: 8,
-              padding: '10px 14px', marginBottom: 16, color: '#f08080', fontSize: 12 }}>{error}</div>
-          )}
-
-          <button onClick={signInWithGoogle} disabled={loading}
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-              width: '100%', padding: '14px 20px', marginBottom: 12,
-              background: '#fff', border: 'none', borderRadius: 10,
-              color: '#333', fontSize: 14, fontWeight: 600, fontFamily: 'inherit',
-              cursor: loading ? 'wait' : 'pointer', WebkitTapHighlightColor: 'transparent' }}>
-            <svg width="18" height="18" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
-            Sign in with Google
-          </button>
-
-          <div style={{ display: 'flex', alignItems: 'center', margin: '16px 0', gap: 12 }}>
-            <div style={{ flex: 1, height: 1, background: '#2a3a4e' }} />
-            <span style={{ color: '#8899aa', fontSize: 11 }}>or</span>
-            <div style={{ flex: 1, height: 1, background: '#2a3a4e' }} />
-          </div>
-
-          {loginMode === 'quick' ? (
-            <>
-              <p style={{ color: '#8899aa', fontSize: 12, marginBottom: 14 }}>Select your identity:</p>
-              <div style={{ maxHeight: '40vh', overflowY: 'auto' }}>
-                {Object.entries(USERS).map(([id, user]) => (
-                  <button key={id} onClick={() => quickLogin(id)} disabled={loading}
-                    style={{ display: 'block', width: '100%', padding: '14px 16px', marginBottom: 8,
-                      background: '#1a2332', border: '1.5px solid #2a3a4e', borderRadius: 10,
-                      color: '#e2e8f0', fontSize: 14, fontFamily: 'inherit',
-                      cursor: loading ? 'wait' : 'pointer', textAlign: 'left',
-                      WebkitTapHighlightColor: 'transparent' }}>
-                    <div style={{ fontWeight: 700 }}>{user.name}</div>
-                    <div style={{ fontSize: 11, color: '#8899aa', marginTop: 3 }}>{user.email}</div>
-                  </button>
-                ))}
-              </div>
-              <button onClick={() => setLoginMode('email')}
-                style={{ background: 'none', border: 'none', color: '#4a90d9', fontSize: 12,
-                  cursor: 'pointer', marginTop: 12, fontFamily: 'inherit' }}>
-                Sign in with email instead
-              </button>
-            </>
-          ) : (
-            <>
-              <input value={emailInput} onChange={e => setEmailInput(e.target.value)}
-                placeholder="Email" type="email"
-                style={{ display: 'block', width: '100%', padding: '12px 16px', marginBottom: 10,
-                  background: '#1a2332', border: '1.5px solid #2a3a4e', borderRadius: 10,
-                  color: '#e2e8f0', fontSize: 14, fontFamily: 'inherit', outline: 'none',
-                  boxSizing: 'border-box', WebkitAppearance: 'none' }} />
-              <input value={passwordInput} onChange={e => setPasswordInput(e.target.value)}
-                placeholder="Password" type="password"
-                onKeyDown={e => { if (e.key === 'Enter') signInWithEmail(); }}
-                style={{ display: 'block', width: '100%', padding: '12px 16px', marginBottom: 14,
-                  background: '#1a2332', border: '1.5px solid #2a3a4e', borderRadius: 10,
-                  color: '#e2e8f0', fontSize: 14, fontFamily: 'inherit', outline: 'none',
-                  boxSizing: 'border-box', WebkitAppearance: 'none' }} />
-              <button onClick={signInWithEmail} disabled={loading}
-                style={{ display: 'block', width: '100%', padding: '14px 20px',
-                  background: '#4a90d9', border: 'none', borderRadius: 10,
-                  color: '#fff', fontSize: 14, fontWeight: 600, fontFamily: 'inherit',
-                  cursor: loading ? 'wait' : 'pointer' }}>
-                Sign In
-              </button>
-              <button onClick={() => setLoginMode('quick')}
-                style={{ background: 'none', border: 'none', color: '#4a90d9', fontSize: 12,
-                  cursor: 'pointer', marginTop: 12, fontFamily: 'inherit' }}>
-                Use quick login instead
-              </button>
-            </>
-          )}
-
-          {loading && <div style={{ color: '#4a90d9', fontSize: 12, marginTop: 12 }}>Connecting...</div>}
-
-          <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px solid #2a3a4e' }}>
-            <p style={{ color: '#8899aa', fontSize: 10 }}>Crash Care Clinics</p>
-          </div>
-        </div>
-      </div>
+      <AuthScreen
+        onLogin={(user) => { setCurrentUser(user.userId); setUserName(user.userName); }}
+        instanceName="Crash Care Clinics"
+      />
     );
   }
 
@@ -387,9 +204,9 @@ export default function App() {
   const renderView = () => {
     switch (appView) {
       case 'action':
-        return <ActionView currentUser={currentUser} users={USERS} supabase={supabase} onScan={() => setShowScan(true)} />;
+        return <ActionView currentUser={currentUser} users={users} supabase={supabase} onScan={() => setShowScan(true)} />;
       case 'workspace':
-        return <ChatView currentUser={currentUser} users={USERS} supabase={supabase} />;
+        return <ChatView currentUser={currentUser} users={users} supabase={supabase} />;
       case 'editor':
         if (registryLoading || !registry) {
           return (
@@ -399,18 +216,18 @@ export default function App() {
             </div>
           );
         }
-        return <FSMEditor initialRegistry={registry} currentUser={currentUser} users={USERS}
+        return <FSMEditor initialRegistry={registry} currentUser={currentUser} users={users}
           locks={locks} onlineUsers={onlineUsers} onSaveFSM={handleSaveFSM}
           onAcquireLock={handleAcquireLock} onReleaseLock={handleReleaseLock}
           onLogEvent={handleLogEvent} onRefreshLocks={refreshLocks}
           onSwitchToWorkspace={() => navigateTo('workspace')} onSwitchToHome={() => navigateTo('action')}
           onLogout={logout} />;
       case 'dashboard':
-        return <Dashboard currentUser={currentUser} users={USERS} supabase={supabase} />;
+        return <Dashboard currentUser={currentUser} users={users} supabase={supabase} />;
             case 'finance':
-        return <FinancialView currentUser={currentUser} users={USERS} supabase={supabase} />;
+        return <FinancialView currentUser={currentUser} users={users} supabase={supabase} />;
 case 'help':
-        return <HelpView currentUser={currentUser} users={USERS} supabase={supabase} activeContext={prevViewRef.current} onBack={() => navigateTo(prevViewRef.current)} />;
+        return <HelpView currentUser={currentUser} users={users} supabase={supabase} activeContext={prevViewRef.current} onBack={() => navigateTo(prevViewRef.current)} />;
       default: return null;
     }
   };
@@ -433,13 +250,13 @@ case 'help':
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: '#0a0e17', zIndex: 10000, overflowY: 'auto', paddingBottom: 80,
         }}>
-          <ScanDocument supabase={supabase} currentUser={currentUser} users={USERS}
+          <ScanDocument supabase={supabase} currentUser={currentUser} users={users}
             onClose={() => setShowScan(false)} activeInstances={[]} />
         </div>
       )}
       {renderView()}
-      <FloatingChat supabase={supabase} currentUser={currentUser} users={USERS} activeView={appView} />
-      <BottomNav role={userRole} activeTab={appView} onNav={navigateTo} onSignOut={logout} />
+      <FloatingChat supabase={supabase} currentUser={currentUser} users={users} activeView={appView} />
+      <BottomNav role={userRole} activeTab={appView} onNav={navigateTo} onSignOut={signOut} />
     </div>
   );
 }
