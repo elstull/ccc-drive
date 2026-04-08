@@ -22,7 +22,18 @@ export default function ChatView({ currentUser, users, supabase }) {
   const [view, setView] = useState('chat'); // 'chat' or 'history'
   const [activityLog, setActivityLog] = useState([]);
   const [logLoading, setLogLoading] = useState(false);
+  const [copiedIndex, setCopiedIndex] = useState(null);
   const endRef = useRef(null);
+
+  const handleCopy = async (text, idx) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedIndex(idx);
+      setTimeout(() => setCopiedIndex(null), 1500);
+    } catch (e) {
+      console.error('Copy failed:', e);
+    }
+  };
 
   const userName = users?.[currentUser]?.name?.split(' ')[0] || 'there';
 
@@ -115,7 +126,7 @@ export default function ChatView({ currentUser, users, supabase }) {
         <>
           {/* Messages */}
           <div style={{
-            background: '#111827', border: '1px solid #1e293b', borderRadius: 12,
+            background: '#111827', border: '1px solid #3a4a5e', borderRadius: 12,
             padding: '12px', minHeight: 300, maxHeight: 'calc(100vh - 340px)',
             overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8,
             marginBottom: 12,
@@ -134,12 +145,30 @@ export default function ChatView({ currentUser, users, supabase }) {
                 <div style={{
                   maxWidth: '85%', padding: '10px 14px', borderRadius: 14,
                   background: m.role === 'user' ? BLUE + '22' : '#0a0e17',
-                  border: '1px solid ' + (m.role === 'user' ? BLUE + '44' : '#1e293b'),
+                  border: '1px solid ' + (m.role === 'user' ? BLUE + '88' : '#3a4a5e'),
                   color: '#e2e8f0', fontSize: 13, lineHeight: 1.6,
                 }}>
-                  {m.content}
+                  <div>{m.content}</div>
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    gap: 8, marginTop: 6,
+                  }}>
+                    <span style={{ fontSize: 9, color: DIM }}>{m.time}</span>
+                    {m.role === 'assistant' && (
+                      <button
+                        onClick={() => handleCopy(m.content, i)}
+                        style={{
+                          background: 'transparent', border: 'none', cursor: 'pointer',
+                          color: copiedIndex === i ? GREEN : DIM, fontSize: 10,
+                          padding: '2px 6px', borderRadius: 4, fontFamily: 'inherit',
+                          WebkitTapHighlightColor: 'transparent',
+                        }}
+                      >
+                        {copiedIndex === i ? '\u2713 Copied!' : '\uD83D\uDCCB Copy'}
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <span style={{ fontSize: 9, color: DIM, marginTop: 2, padding: '0 6px' }}>{m.time}</span>
               </div>
             ))}
             {loading && (
@@ -153,7 +182,7 @@ export default function ChatView({ currentUser, users, supabase }) {
           {/* Input */}
           <div style={{
             display: 'flex', gap: 8, alignItems: 'center',
-            background: '#111827', border: '1px solid #1e293b', borderRadius: 12,
+            background: '#111827', border: '1px solid #3a4a5e', borderRadius: 12,
             padding: '10px 14px',
           }}>
             <input
