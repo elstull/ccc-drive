@@ -9,12 +9,14 @@ import remarkGfm from 'remark-gfm';
 // - Summary cards at top
 // - Clean sections
 // - Consistent spacing and colors
+// - Voice input via Web Speech API
 //
 // ═══════════════════════════════════════════════════════════════════════════
 
 const DIM = '#8899aa';
 const BLUE = '#4a90d9';
 const GREEN = '#4ade80';
+const RED = '#e03030';
 
 
 export default function ChatView({ currentUser, users, supabase }) {
@@ -25,7 +27,57 @@ export default function ChatView({ currentUser, users, supabase }) {
   const [activityLog, setActivityLog] = useState([]);
   const [logLoading, setLogLoading] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState(null);
+  const [isListening, setIsListening] = useState(false);
   const endRef = useRef(null);
+  const recognitionRef = useRef(null);
+
+  // ── Voice input setup ──
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      setInput(prev => prev ? prev + ' ' + transcript : transcript);
+    };
+
+    recognition.onerror = (event) => {
+      console.error('Speech recognition error:', event.error);
+      setIsListening(false);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognitionRef.current = recognition;
+
+    return () => {
+      try { recognition.abort(); } catch {}
+    };
+  }, []);
+
+  const toggleVoice = () => {
+    if (!recognitionRef.current) return;
+    if (isListening) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+    } else {
+      try {
+        recognitionRef.current.start();
+        setIsListening(true);
+      } catch (e) {
+        console.error('Voice start error:', e);
+      }
+    }
+  };
+
+  const hasVoice = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 
   const handleCopy = async (text, idx) => {
     try {
@@ -68,22 +120,37 @@ export default function ChatView({ currentUser, users, supabase }) {
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
+    // Stop listening if voice is active
+    if (isListening && recognitionRef.current) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+    }
     const msg = input.trim();
     setInput('');
-    const userMsg = { role: 'user', content: msg, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
-    setMessages(prev => [...prev, userMsg]);
+    const time = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const userMsg = { role: 'user', content: msg, time: time() };
+    const history = [...messages, userMsg].slice(-12).map(m => ({ role: m.role, content: m.content }));
+    setMessages(prev => [...prev, userMsg, { role: 'assistant', content: '', pending: true, time: time() }]);
     setLoading(true);
+    setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
     try {
-      const history = messages.slice(-12).map(m => ({ role: m.role, content: m.content }));
       const { data, error } = await supabase.functions.invoke('chat-query', {
         body: { message: msg, history, userId: currentUser, userName: users?.[currentUser]?.name || currentUser },
       });
       if (error) throw error;
       const reply = data?.reply || 'I had trouble connecting. Please try again.';
-      setMessages(prev => [...prev, { role: 'assistant', content: reply, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
+      setMessages(prev => prev.map((m, i) =>
+        i === prev.length - 1 && m.pending
+          ? { role: 'assistant', content: reply, time: time() }
+          : m
+      ));
     } catch (err) {
       console.error('Chat error:', err);
-      setMessages(prev => [...prev, { role: 'assistant', content: 'I had trouble reaching the server. Check your connection and try again.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
+      setMessages(prev => prev.map((m, i) =>
+        i === prev.length - 1 && m.pending
+          ? { role: 'assistant', content: 'I had trouble reaching the server. Check your connection and try again.', time: time() }
+          : m
+      ));
     } finally {
       setLoading(false);
       setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
@@ -103,7 +170,7 @@ export default function ChatView({ currentUser, users, supabase }) {
         </div>
       </div>
 
-      {/* Tab toggle — same style as Dashboard drill-in */}
+      {/* Tab toggle */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
         <button onClick={() => setView('chat')} style={{
           flex: 1, padding: '10px', textAlign: 'center', borderRadius: 8,
@@ -151,43 +218,46 @@ export default function ChatView({ currentUser, users, supabase }) {
                   color: '#e2e8f0', fontSize: 13, lineHeight: 1.6,
                 }}>
                   {m.role === 'assistant' ? (
-                    <div className="chat-md">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
-                    </div>
+                    m.pending ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: BLUE, fontSize: 12 }}>
+                        <span style={{ animation: 'pulse 1s infinite' }}>{'\u25CF'}</span> Thinking...
+                      </div>
+                    ) : (
+                      <div className="chat-md">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                      </div>
+                    )
                   ) : (
                     <div>{m.content}</div>
                   )}
-                  <div style={{
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    gap: 8, marginTop: 6,
-                  }}>
-                    <span style={{ fontSize: 9, color: DIM }}>{m.time}</span>
-                    {m.role === 'assistant' && (
-                      <button
-                        onClick={() => handleCopy(m.content, i)}
-                        style={{
-                          background: 'transparent', border: 'none', cursor: 'pointer',
-                          color: copiedIndex === i ? GREEN : DIM, fontSize: 10,
-                          padding: '2px 6px', borderRadius: 4, fontFamily: 'inherit',
-                          WebkitTapHighlightColor: 'transparent',
-                        }}
-                      >
-                        {copiedIndex === i ? '\u2713 Copied!' : '\uD83D\uDCCB Copy'}
-                      </button>
-                    )}
-                  </div>
+                  {!m.pending && (
+                    <div style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      gap: 8, marginTop: 6,
+                    }}>
+                      <span style={{ fontSize: 9, color: DIM }}>{m.time}</span>
+                      {m.role === 'assistant' && (
+                        <button
+                          onClick={() => handleCopy(m.content, i)}
+                          style={{
+                            background: 'transparent', border: 'none', cursor: 'pointer',
+                            color: copiedIndex === i ? GREEN : DIM, fontSize: 10,
+                            padding: '2px 6px', borderRadius: 4, fontFamily: 'inherit',
+                            WebkitTapHighlightColor: 'transparent',
+                          }}
+                        >
+                          {copiedIndex === i ? '\u2713 Copied!' : '\uD83D\uDCCB Copy'}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
-            {loading && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: BLUE, fontSize: 12, padding: '4px 8px' }}>
-                <span style={{ animation: 'pulse 1s infinite' }}>{'\u25CF'}</span> Thinking...
-              </div>
-            )}
             <div ref={endRef} />
           </div>
 
-          {/* Input */}
+          {/* Input with voice button */}
           <div style={{
             display: 'flex', gap: 8, alignItems: 'center',
             background: '#111827', border: '1px solid #3a4a5e', borderRadius: 12,
@@ -197,12 +267,24 @@ export default function ChatView({ currentUser, users, supabase }) {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') sendMessage(); }}
-              placeholder="Type your message..."
+              placeholder={isListening ? 'Listening...' : 'Type your message...'}
               style={{
                 flex: 1, background: 'transparent', border: 'none', color: '#e2e8f0',
                 fontSize: 14, fontFamily: 'inherit', outline: 'none',
               }}
             />
+            {hasVoice && (
+              <button onClick={toggleVoice} title={isListening ? 'Stop listening' : 'Voice input'} style={{
+                width: 38, height: 38, borderRadius: '50%',
+                background: isListening ? RED : 'transparent',
+                border: '1px solid ' + (isListening ? RED : '#3a4a5e'),
+                color: isListening ? '#fff' : DIM, fontSize: 16,
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0, fontFamily: 'inherit',
+                animation: isListening ? 'pulse 1s infinite' : 'none',
+                WebkitTapHighlightColor: 'transparent',
+              }}>{'\uD83C\uDF99'}</button>
+            )}
             <button onClick={sendMessage} disabled={!input.trim()} style={{
               background: input.trim() ? BLUE : '#1e293b',
               border: 'none', borderRadius: 8, padding: '10px 16px',

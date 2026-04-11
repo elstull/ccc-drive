@@ -1,15 +1,19 @@
 import { useState, useEffect, useRef } from 'react';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FLOATING CHAT — available on every screen
+// FLOATING CHAT — available on every screen (except Chat tab)
 //
 // Draggable, resizable, dockable.
 // Toggle between live chat and activity history.
 // Context-aware: knows which screen you're on.
+// Wired to Supabase Edge Function for real AI responses.
 //
+// Version: 2.1.1 — 2026-04-12
 // ═══════════════════════════════════════════════════════════════════════════
 
 const DIM = '#556677';
+const APP_VERSION = '2.1.1';
+const BUILD_DATE = '2026-04-12';
 
 export default function FloatingChat({ supabase, currentUser, users, activeView }) {
   const [open, setOpen] = useState(false);
@@ -56,22 +60,39 @@ export default function FloatingChat({ supabase, currentUser, users, activeView 
     return Math.floor(mins / 1440) + 'd ago';
   };
 
-  const sendMessage = () => {
-    if (!input.trim()) return;
+  const sendMessage = async () => {
+    if (!input.trim() || loading) return;
     const msg = input.trim();
     setInput('');
-    setMessages(prev => [...prev, { role: 'user', content: msg }]);
-    setLoading(true);
     setShowHistory(false);
-    // Placeholder response — will wire to Claude API
-    setTimeout(() => {
+
+    const userMsg = { role: 'user', content: msg };
+    setMessages(prev => [...prev, userMsg]);
+    setLoading(true);
+
+    try {
+      const history = messages.slice(-12).map(m => ({ role: m.role, content: m.content }));
+      const { data, error } = await supabase.functions.invoke('chat-query', {
+        body: {
+          message: msg,
+          history,
+          userId: currentUser,
+          userName: users?.[currentUser]?.name || currentUser,
+        },
+      });
+      if (error) throw error;
+      const reply = data?.reply || 'I had trouble connecting. Please try again.';
+      setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+    } catch (err) {
+      console.error('FloatingChat error:', err);
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: 'I can see you are on the ' + (activeView || 'home') + ' screen. Full AI integration coming soon. For detailed conversations, use the Chat tab.'
+        content: 'I had trouble reaching the server. Check your connection and try again.',
       }]);
+    } finally {
       setLoading(false);
       setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-    }, 800);
+    }
   };
 
   // Drag handlers
@@ -118,6 +139,10 @@ export default function FloatingChat({ supabase, currentUser, users, activeView 
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
   };
+
+  // ── Hide on Chat tab — ChatView handles chat there ──
+  // IMPORTANT: this check MUST come AFTER all hooks (React rules of hooks)
+  if (activeView === 'workspace') return null;
 
   // ── Floating button — small, semi-transparent until hover ──
   if (!open) {
@@ -167,6 +192,7 @@ export default function FloatingChat({ supabase, currentUser, users, activeView 
           </span>
         </div>
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <span style={{ fontSize: 8, color: DIM }} title={`v${APP_VERSION} (${BUILD_DATE})`}>v{APP_VERSION}</span>
           {pos.x !== -1 && (
             <button onClick={resetPos} title="Dock" style={{
               background: '#4a90d922', border: '1px solid #4a90d944', borderRadius: 4,
